@@ -1,33 +1,37 @@
+import os
 import librosa
-import numpy as np
-import matplotlib.pyplot as plt
-
-file_name = "15f97caafef4a4b352e54781236cf2b4.wav"
-
-y, sr = librosa.load(file_name)
-
-from asteroid.models import ConvTasNet
 import torch
-import torchaudio
-
-model = ConvTasNet.from_pretrained("JorisCos/ConvTasNet_Libri2Mix_sepclean_16k")
-
-# 音声データの整形
-waveform_torch = torch.tensor(y).unsqueeze(0)  # (1, 1, T)
-resampler = torchaudio.transforms.Resample(orig_freq=22050, new_freq=16000)
-waveform_torch = resampler(waveform_torch)
-
-# モデルで話者分離（出力：話者数 x サンプル数）
-separated_sources = model.separate(waveform_torch)
-separated_sources_np = separated_sources.cpu().numpy()
-
 import soundfile as sf
+from asteroid.models import ConvTasNet
+from tqdm import tqdm
 
-# separated_sources_np: shape = (1, 2, T) → (2, T)
-stereo_data = separated_sources_np[0]  # shape: (2, T)
+# ディレクトリ設定
+input_dir = "/mnt/work-qnap/llmc/J-CHAT/audio/podcast_test/00000-of-00001/cuts.000000"
+output_dir = "/mnt/kiso-qnap3/yuabe/m1/useAsteroid/data/J-CHAT/audio/podcast_test/00000-of-00001/cuts.000000"
+os.makedirs(output_dir, exist_ok=True)
 
-# 転置して shape を (T, 2) にする → ステレオ形式
-stereo_data = stereo_data.T  # shape: (T, 2)
+# モデル読み込み（16kHz専用）
+model = ConvTasNet.from_pretrained("JorisCos/ConvTasNet_Libri2Mix_sepclean_16k")
+model.eval()
 
-# 保存
-sf.write("separated_stereo.wav", stereo_data, samplerate=16000)
+# .wavファイルの一括処理
+for file in tqdm(os.listdir(input_dir)):
+    if not file.endswith(".wav"):
+        continue
+
+    input_path = os.path.join(input_dir, file)
+    output_path = os.path.join(output_dir, file)
+
+    # 音声読み込みとResample（→16kHz）
+    y, _ = librosa.load(input_path, sr=16000)  # librosaでリサンプリング済み
+    wav_tensor = torch.tensor(y, dtype=torch.float32).unsqueeze(0)
+
+    with torch.no_grad():
+        separated = model.separate(wav_tensor)  # shape: (1, 2, T)
+
+    stereo_data = separated[0].cpu().numpy().T  # shape: (T, 2)
+
+    # 保存
+    sf.write(output_path, stereo_data, samplerate=16000)
+
+print(f"保存先: {output_dir}")
